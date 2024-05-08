@@ -19,14 +19,15 @@ def main():
     net: UNetFormer.UNetFormer
     image_inputs = torch.randn(2, 3, 1024, 1024).cuda()
 
-    imp = tp.importance.GroupHessianImportance()
+    imp = tp.importance.RandomImportance()
 
-    pruner = tp.pruner.MetaPruner(
+    pruner = tp.pruner.MagnitudePruner(
         net,
-        image_inputs,
+        example_inputs=image_inputs,
         global_pruning=False,
         importance=imp,
         pruning_ratio=0.1,
+        iterative_steps=1,
     )
 
     ori_macs, ori_size = tp.utils.count_ops_and_params(net, image_inputs)
