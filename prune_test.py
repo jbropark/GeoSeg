@@ -14,6 +14,7 @@ def main():
     model.eval()
 
     net = model.net
+    net.eval()
 
     net: UNetFormer.UNetFormer
     image_inputs = torch.randn(2, 3, 1024, 1024).cuda()
