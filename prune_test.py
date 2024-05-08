@@ -10,29 +10,28 @@ def main():
     config = py2cfg(args.config_path)
     model = Supervision_Train.load_from_checkpoint(
         os.path.join(config.weights_path, config.test_weights_name + '.ckpt'), config=config)
-    model.cpu()
+    model.cuda()
     model.eval()
 
     net = model.net
 
     net: UNetFormer.UNetFormer
-    image_inputs = torch.randn(2, 3, 1024, 1024)
-    example_inputs = torch.randn(2, 64, 24, 24)
+    image_inputs = torch.randn(2, 3, 1024, 1024).cuda()
 
     imp = tp.importance.GroupHessianImportance()
 
     pruner = tp.pruner.MetaPruner(
         net,
         image_inputs,
+        global_pruning=False,
         importance=imp,
-        pruning_ratio=0.5,
-        ignored_layers=list(),
+        pruning_ratio=0.1,
     )
 
     ori_macs, ori_size = tp.utils.count_ops_and_params(net, image_inputs)
     pruner.step()
 
-    torch.save(net, "prune-50.pth")
+    torch.save(net, "prune-10.pth")
 
     macs, size = tp.utils.count_ops_and_params(net, image_inputs)
     print("Origin", ori_macs, ori_size)
