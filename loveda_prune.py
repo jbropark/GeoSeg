@@ -1,16 +1,15 @@
 from train_supervision import *
 import torch_pruning as tp
-from geoseg.models import UNetFormer
+from geoseg.models.UNetFormer import load_backbone
 
 
 def get_args():
     parser = argparse.ArgumentParser()
-    arg = parser.add_argument
-    arg("-c", "--config_path", type=Path, required=True, help="Path to  config")
-    arg("--ratio", type=float, help="pruning ratio", default=0.5)
-    arg("--cuda", action="store_true", help="run on gpu")
-    arg("--importance", choices=["random", "mag", "bns", "lamp"], default="mag")
-    arg("--output", help="save file name", default="prune.ckpt")
+    parser.add_argument("--path", default="")
+    parser.add_argument("--name", default="swsl_resnet18")
+    parser.add_argument("--ratio", type=float, help="pruning ratio", default=0.5)
+    parser.add_argument("--importance", choices=["random", "mag", "bns", "lamp"], default="mag")
+    parser.add_argument("--output", help="save file name", default="prune.ckpt")
     return parser.parse_args()
 
 
@@ -29,26 +28,18 @@ def main():
     args = get_args()
     importance = make_importance(args.importance)
 
-    config = py2cfg(args.config_path)
-    model = Supervision_Train.load_from_checkpoint(
-        os.path.join(config.weights_path, config.test_weights_name + '.ckpt'), config=config)
+    backbone = load_backbone(args.path, args.name, True)
+    if not args.path:
+        torch.save(backbone, f"{args.name}-pretrained.ckpt")
 
-    model.eval()
-
-    net = model.net.backbone
-    net.eval()
+    backbone.eval()
 
     ignored_layers = list()
 
-    net: UNetFormer.UNetFormer
     image_inputs = torch.randn(2, 3, 1024, 1024)
 
-    if args.cuda:
-        net.cuda()
-        image_inputs.cuda()
-
     pruner = tp.pruner.MagnitudePruner(
-        net,
+        backbone,
         example_inputs=image_inputs,
         global_pruning=False,
         importance=importance,
@@ -57,14 +48,15 @@ def main():
         ignored_layers=ignored_layers,
     )
 
-    ori_macs, ori_size = tp.utils.count_ops_and_params(net, image_inputs)
+    ori_macs, ori_size = tp.utils.count_ops_and_params(backbone, image_inputs)
     for group in pruner.step(interactive=True):
         print(group)
         group.prune()
 
-    torch.save(net, args.output)
+    backbone.zero_grad()
+    torch.save(backbone, args.output)
 
-    macs, size = tp.utils.count_ops_and_params(net, image_inputs)
+    macs, size = tp.utils.count_ops_and_params(backbone, image_inputs)
     print("Origin", ori_macs, ori_size)
     print("New", macs, size)
 

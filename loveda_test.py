@@ -44,11 +44,12 @@ def img_writer(inp):
 def get_args():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
-    arg("-c", "--config_path", type=Path, required=True, help="Path to  config")
+    arg("-c", "--config_path", type=Path, required=True, help="Path to config")
     arg("-o", "--output_path", type=Path, help="Path where to save resulting masks.", required=True)
     arg("-t", "--tta", help="Test time augmentation.", default=None, choices=[None, "d4", "lr"]) ## lr is flip TTA, d4 is multi-scale TTA
     arg("--rgb", help="whether output rgb masks", action='store_true')
     arg("--val", help="whether eval validation set", action='store_true')
+    arg("--cpu", action="store_true")
     return parser.parse_args()
 
 
@@ -58,7 +59,9 @@ def main():
     args.output_path.mkdir(exist_ok=True, parents=True)
 
     model = Supervision_Train.load_from_checkpoint(os.path.join(config.weights_path, config.test_weights_name+'.ckpt'), config=config)
-    model.cuda()
+    if not args.cpu:
+        model.cuda()
+
     model.eval()
     if args.tta == "lr":
         transforms = tta.Compose(
@@ -97,7 +100,11 @@ def main():
         results = []
         for input in tqdm(test_loader):
             # raw_prediction NxCxHxW
-            raw_predictions = model(input['img'].cuda())
+            img = input['img']
+            if not args.cpu:
+                img.cuda()
+
+            raw_predictions = model(img)
 
             image_ids = input["img_id"]
             if args.val:
