@@ -10,6 +10,7 @@ def get_args():
     parser.add_argument("--ratio", type=float, help="pruning ratio", default=0.5)
     parser.add_argument("--importance", choices=["random", "mag", "bns", "lamp"], default="mag")
     parser.add_argument("--output", help="save file name", default="prune.ckpt")
+    parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 
 
@@ -50,10 +51,25 @@ def main():
 
     ori_macs, ori_size = tp.utils.count_ops_and_params(backbone, image_inputs)
     for group in pruner.step(interactive=True):
-        print(group)
+        if args.verbose:
+            print(group)
+
         group.prune()
 
     backbone.zero_grad()
+
+    print(backbone.feature_info.channels())
+
+    new_sizes = [x.shape[-1] for x in reversed(backbone(image_inputs))]
+
+    # fix feature info
+    feature_info = backbone.feature_info
+    # print(feature_info.out_indices)
+
+    for idx, size in zip(feature_info.out_indices, new_sizes):
+        feature_info.info[idx]["num_chs"] = size
+
+    print(backbone.feature_info.channels())
     torch.save(backbone, args.output)
 
     macs, size = tp.utils.count_ops_and_params(backbone, image_inputs)
