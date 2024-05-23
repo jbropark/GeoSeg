@@ -61,6 +61,7 @@ def main():
     model = Supervision_Train.load_from_checkpoint(os.path.join(config.weights_path, config.test_weights_name+'.ckpt'), config=config)
     if not args.cpu:
         model.cuda()
+        model.net.backbone.cuda()
 
     model.eval()
     if args.tta == "lr":
