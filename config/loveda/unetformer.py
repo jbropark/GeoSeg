@@ -31,7 +31,7 @@ gpus = 'auto'  # default or gpu ids:[0] or gpu nums: 2, more setting can refer t
 resume_ckpt_path = None  # whether continue training with the checkpoint, default None
 
 #  define the network
-net = UNetFormer(backbone_path="prune.cpkt", num_classes=num_classes)
+net = UNetFormer(backbone_path="prune.ckpt", num_classes=num_classes)
 
 # define the loss
 loss = UnetFormerLoss(ignore_index=ignore_index)
