@@ -60,7 +60,7 @@ def main():
 
     print(backbone.feature_info.channels())
 
-    new_sizes = [x.shape[1] for x in reversed(backbone(image_inputs))]
+    new_sizes = [x.shape[1] for x in backbone(image_inputs)]
 
     # fix feature info
     feature_info = backbone.feature_info
