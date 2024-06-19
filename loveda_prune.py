@@ -1,4 +1,4 @@
-from train_supervision import *
+from train_supervision_distill import *
 import torch_pruning as tp
 
 
@@ -27,11 +27,12 @@ def make_importance(importance):
 def main():
     args = get_args()
     importance = make_importance(args.importance)
+    config = py2cfg("GeoSeg/config/loveda/unetformer_distill.py")
+    model = Supervision_Train.load_from_checkpoint(args.path, config=config)
 
-    model = Supervision_Train.load_from_checkpoint(args.path)
-
-    backbone = model.net.backbone
+    backbone = model.student_net.backbone
     backbone.eval()
+    backbone.cpu()
 
     ignored_layers = list()
 
@@ -71,6 +72,10 @@ def main():
     print(backbone.feature_info.channels())
     torch.save(backbone, args.output)
     """
+
+    new_sizes = [x.shape[1] for x in backbone(image_inputs)]
+    backbone.feature_info = new_sizes
+    torch.save(backbone, args.output)
 
     macs, size = tp.utils.count_ops_and_params(backbone, image_inputs)
     print("Origin", ori_macs, ori_size)
