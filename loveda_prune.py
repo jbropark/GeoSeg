@@ -58,6 +58,7 @@ def main():
 
     backbone.zero_grad()
 
+    """
     print(backbone.feature_info.channels())
 
     new_sizes = [x.shape[1] for x in backbone(image_inputs)]
@@ -71,6 +72,7 @@ def main():
 
     print(backbone.feature_info.channels())
     torch.save(backbone, args.output)
+    """
 
     macs, size = tp.utils.count_ops_and_params(backbone, image_inputs)
     print("Origin", ori_macs, ori_size)
