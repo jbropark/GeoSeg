@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
 from geoseg.losses import *
 from geoseg.datasets.loveda_dataset import *
-from geoseg.models.UNetFormer import UNetFormer
+from geoseg.models.UNetFormer import UNetFormer, make_default_resnet
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
 #from geoseg.models.sagan_models import Discriminator
@@ -33,8 +33,8 @@ resume_ckpt_path = None  # whether continue training with the checkpoint, defaul
 student_layers = [2, 2, 2, 2]
 teacher_layer = [3, 4, 23, 3]
 log_name = 'distill_log/{}'.format(weights_name+str(student_layers)+str(teacher_layer))
-student_net = UNetFormer(student_layers, num_classes=num_classes)
-teacher_net = UNetFormer(teacher_layer, num_classes=num_classes)
+student_net = UNetFormer(make_default_resnet(student_layers), num_classes=num_classes)
+teacher_net = UNetFormer(make_default_resnet(teacher_layer), num_classes=num_classes)
 #Discriminator_net = Discriminator()#args.preprocess_GAN_mode, args.classes_num, args.batch_size, args.imsize_for_adv, args.adv_conv_dim
 # define the loss
 loss = UnetFormerDistillLoss(ignore_index=ignore_index)

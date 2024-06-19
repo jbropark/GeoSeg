@@ -34,8 +34,7 @@ resume_ckpt_path = None  # whether continue training with the checkpoint, defaul
 # net = UNetFormer(backbone_path="prune.ckpt", num_classes=num_classes)
 
 layers = [3, 4, 23, 3]
-_backbone = make_default_resnet(layers)
-net = UNetFormer(_backbone, num_classes=num_classes)
+net = UNetFormer(make_default_resnet(layers), num_classes=num_classes)
 
 # define the loss
 loss = UnetFormerLoss(ignore_index=ignore_index)

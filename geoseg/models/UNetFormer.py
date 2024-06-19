@@ -385,5 +385,5 @@ class UNetFormer(nn.Module):
             return x, res1, res2, res3, res4
         
 if __name__ == "__main__":
-    unet = UNetFormer()
+    unet = UNetFormer(make_default_resnet([3, 4, 23, 3]))
     print(unet)
