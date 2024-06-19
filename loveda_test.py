@@ -112,7 +112,7 @@ def main():
 
             img_type = input['img_type']
 
-            raw_predictions = nn.Softmax(dim=1)(raw_predictions)
+            raw_predictions = nn.Softmax(dim=1)(raw_predictions[0])
             predictions = raw_predictions.argmax(dim=1)
 
             for i in range(raw_predictions.shape[0]):
