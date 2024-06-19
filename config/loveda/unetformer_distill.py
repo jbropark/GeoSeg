@@ -1,15 +1,15 @@
 from torch.utils.data import DataLoader
 from geoseg.losses import *
 from geoseg.datasets.loveda_dataset import *
-from geoseg.models.UNetFormer import UNetFormer, make_default_resnet
+from geoseg.models.UNetFormer import UNetFormer
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
-
+#from geoseg.models.sagan_models import Discriminator
 # training hparam
-max_epoch = 30
+max_epoch = 100
 ignore_index = len(CLASSES)
-train_batch_size = 16
-val_batch_size = 16
+train_batch_size = 8
+val_batch_size = 8
 lr = 6e-4
 weight_decay = 0.01
 backbone_lr = 6e-5
@@ -17,10 +17,9 @@ backbone_weight_decay = 0.01
 num_classes = len(CLASSES)
 classes = CLASSES
 
-weights_name = "unetformer-r18-512crop-ms-epoch30-rep"
-weights_path = "model_weights/loveda/{}".format(weights_name)
+weights_name = "resnet-distill"
+weights_path = "drive/MyDrive/model_weights/loveda/{}".format(weights_name)
 test_weights_name = "last"
-log_name = 'loveda/{}'.format(weights_name)
 monitor = 'val_mIoU'
 monitor_mode = 'max'
 save_top_k = 1
@@ -31,14 +30,14 @@ gpus = 'auto'  # default or gpu ids:[0] or gpu nums: 2, more setting can refer t
 resume_ckpt_path = None  # whether continue training with the checkpoint, default None
 
 #  define the network
-# net = UNetFormer(backbone_path="prune.ckpt", num_classes=num_classes)
-
-layers = [3, 4, 23, 3]
-_backbone = make_default_resnet(layers)
-net = UNetFormer(_backbone, num_classes=num_classes)
-
+student_layers = [2, 2, 2, 2]
+teacher_layer = [3, 4, 23, 3]
+log_name = 'distill_log/{}'.format(weights_name+str(student_layers)+str(teacher_layer))
+student_net = UNetFormer(student_layers, num_classes=num_classes)
+teacher_net = UNetFormer(teacher_layer, num_classes=num_classes)
+#Discriminator_net = Discriminator()#args.preprocess_GAN_mode, args.classes_num, args.batch_size, args.imsize_for_adv, args.adv_conv_dim
 # define the loss
-loss = UnetFormerLoss(ignore_index=ignore_index)
+loss = UnetFormerDistillLoss(ignore_index=ignore_index)
 use_aux_loss = True
 
 # define the dataloader
@@ -61,7 +60,7 @@ def train_aug(img, mask):
     return img, mask
 
 
-train_dataset = LoveDATrainDataset(transform=train_aug, data_root='data/LoveDA/Train')
+train_dataset = LoveDATrainDataset(transform=train_aug, data_root='data/LoveDA/Val')
 
 val_dataset = loveda_val_dataset
 
@@ -83,8 +82,10 @@ val_loader = DataLoader(dataset=val_dataset,
 
 # define the optimizer
 layerwise_params = {"backbone.*": dict(lr=backbone_lr, weight_decay=backbone_weight_decay)}
-net_params = utils.process_model_params(net, layerwise_params=layerwise_params)
-base_optimizer = torch.optim.AdamW(net_params, lr=lr, weight_decay=weight_decay)
+student_net_params = utils.process_model_params(student_net, layerwise_params=layerwise_params)
+teacher_net_params = utils.process_model_params(teacher_net, layerwise_params=layerwise_params)
+
+base_optimizer = torch.optim.AdamW(student_net_params, lr=lr, weight_decay=weight_decay)
 optimizer = Lookahead(base_optimizer)
 lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_epoch, eta_min=1e-6)
 

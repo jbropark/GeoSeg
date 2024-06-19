@@ -34,28 +34,42 @@ class Supervision_Train(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.net = config.net
-
+        self.student_net = config.student_net
+        self.teacher_net = config.teacher_net
+        
+        self.teacher_net.eval()
+        #load the teacher model
+        teacher_state_dict = torch.load('drive/MyDrive/model_weights/loveda/resnet_real_teacher.ckpt')['state_dict']
+        self.load_teacher_net(self.teacher_net, teacher_state_dict)
+        
+            
         self.loss = config.loss
 
         self.metrics_train = Evaluator(num_class=config.num_classes)
         self.metrics_val = Evaluator(num_class=config.num_classes)
 
+    def load_teacher_net(self, teacher_net, state_dict):
+        new_state_dict = {k[4:]: v for k,v in state_dict.items()}
+        self.teacher_net.load_state_dict(new_state_dict)
+
+    
     def forward(self, x):
         # only net is used in the prediction/inference
-        seg_pre = self.net(x)
+        seg_pre = self.student_net(x)
         return seg_pre
 
     def training_step(self, batch, batch_idx):
         img, mask = batch['img'], batch['gt_semantic_seg']
 
-        prediction = self.net(img)
-        loss = self.loss(prediction, mask)
+        pre_S = self.student_net(img)
+        with torch.no_grad():
+            pre_T = self.teacher_net(img)
+        loss = self.loss(pre_S, mask, pre_T)
 
         if self.config.use_aux_loss:
-            pre_mask = nn.Softmax(dim=1)(prediction[0])
+            pre_mask = nn.Softmax(dim=1)(pre_S[0])
         else:
-            pre_mask = nn.Softmax(dim=1)(prediction)
+            pre_mask = nn.Softmax(dim=1)(pre_S)
 
         pre_mask = pre_mask.argmax(dim=1)
         for i in range(mask.shape[0]):
@@ -100,13 +114,18 @@ class Supervision_Train(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         img, mask = batch['img'], batch['gt_semantic_seg']
-        prediction, _, _, _, _ = self.forward(img)
-        pre_mask = nn.Softmax(dim=1)(prediction)
+        
+        pre_S = self.student_net(img)
+        with torch.no_grad():
+            pre_T = self.teacher_net(img)
+        loss_val = self.loss(pre_S, mask, pre_T)
+
+        pre_mask = nn.Softmax(dim=1)(pre_S[0])
         pre_mask = pre_mask.argmax(dim=1)
+        
         for i in range(mask.shape[0]):
             self.metrics_val.add_batch(mask[i].cpu().numpy(), pre_mask[i].cpu().numpy())
-
-        loss_val = self.loss(prediction, mask)
+        
         return {"loss_val": loss_val}
 
     def on_validation_epoch_end(self):
@@ -170,7 +189,7 @@ def main():
                                           save_last=config.save_last, mode=config.monitor_mode,
                                           dirpath=config.weights_path,
                                           filename=config.weights_name)
-    logger = CSVLogger('lightning_logs', name=config.log_name)
+    logger = CSVLogger('drive/MyDrive/', name=config.log_name)
 
     model = Supervision_Train(config)
     if config.pretrained_ckpt_path:

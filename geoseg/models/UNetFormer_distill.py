@@ -8,7 +8,6 @@ import timm
 
 from .ResNet import ResNet, BasicBlock, Bottleneck
 
-
 class ConvBNReLU(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size=3, dilation=1, stride=1, norm_layer=nn.BatchNorm2d, bias=False):
         super(ConvBNReLU, self).__init__(
@@ -349,26 +348,95 @@ class Decoder(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-
-def make_default_resnet(layers):
-    return ResNet(block=BasicBlock,layers=layers) 
-
-     
-class UNetFormer(nn.Module):
+class Decoder_shrink(nn.Module):
     def __init__(self,
-                 backbone: ResNet,
+                 encoder_channels=(64, 128, 256, 512),
                  decode_channels=64,
                  dropout=0.1,
+                 window_size=8,
+                 num_classes=6):
+        super(Decoder, self).__init__()
+
+        self.pre_conv = ConvBN(encoder_channels[-1], decode_channels, kernel_size=1)
+        self.b4 = Block(dim=decode_channels, num_heads=8, window_size=window_size)
+
+        self.b3 = Block(dim=decode_channels, num_heads=8, window_size=window_size)
+        self.p3 = WF(encoder_channels[-2], decode_channels)
+
+        self.b2 = Block(dim=decode_channels, num_heads=8, window_size=window_size)
+        self.p2 = WF(encoder_channels[-3], decode_channels)
+
+        if self.training:
+            self.up4 = nn.UpsamplingBilinear2d(scale_factor=4)
+            self.up3 = nn.UpsamplingBilinear2d(scale_factor=2)
+            self.aux_head = AuxHead(decode_channels, num_classes)
+
+        self.p1 = FeatureRefinementHead(encoder_channels[-4], decode_channels)
+
+        self.segmentation_head = nn.Sequential(ConvBNReLU(decode_channels, decode_channels),
+                                               nn.Dropout2d(p=dropout, inplace=True),
+                                               Conv(decode_channels, num_classes, kernel_size=1))
+        self.init_weight()
+
+    def forward(self, res1, res2, res3, res4, h, w):
+        if self.training:
+            x = self.b4(self.pre_conv(res4))
+            h4 = self.up4(x)
+
+            x = self.p3(x, res3)
+            x = self.b3(x)
+            h3 = self.up3(x)
+
+            x = self.p2(x, res2)
+            x = self.b2(x)
+            h2 = x
+            x = self.p1(x, res1)
+            x = self.segmentation_head(x)
+            x = F.interpolate(x, size=(h, w), mode='bilinear', align_corners=False)
+
+            ah = h4 + h3 + h2
+            ah = self.aux_head(ah, h, w)
+
+            return x, ah
+        else:
+            x = self.b4(self.pre_conv(res4))
+            x = self.p3(x, res3)
+            x = self.b3(x)
+
+            x = self.p2(x, res2)
+            x = self.b2(x)
+
+            x = self.p1(x, res1)
+
+            x = self.segmentation_head(x)
+            x = F.interpolate(x, size=(h, w), mode='bilinear', align_corners=False)
+
+            return x
+
+    def init_weight(self):
+        for m in self.children():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, a=1)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+                    
+class UNetFormer(nn.Module):
+    def __init__(self,
+                 decode_channels=64,
+                 dropout=0.1,
+                 backbone_name='swsl_resnet18',
+                 pretrained=True,
                  window_size=8,
                  num_classes=6
                  ):
         super().__init__()
-        self.backbone = backbone
-        encoder_channels = self.backbone.feature_info
+
+        #self.backbone = ResNet(block=BasicBlock,layers=[2,2,2,2]) 
+        #encoder_channels = self.backbone.feature_info
         #backbone_name = 'swsl_resnet18'
-        #self.backbone = timm.create_model(backbone_name, features_only=True, output_stride=32,
-        #                                  out_indices=(1, 2, 3, 4), pretrained=True)
-        #encoder_channels = self.backbone.feature_info.channels()
+        self.backbone = timm.create_model(backbone_name, features_only=True, output_stride=32,
+                                          out_indices=(1, 2, 3, 4), pretrained=pretrained)
+        encoder_channels = self.backbone.feature_info.channels()
         #print(encoder_channels, "encoder_channels")
         #print(self.backbone)
         self.decoder = Decoder(encoder_channels, decode_channels, dropout, window_size, num_classes)
@@ -377,12 +445,126 @@ class UNetFormer(nn.Module):
         h, w = x.size()[-2:]
         res1, res2, res3, res4 = self.backbone(x)
         
+        #print(res1.shape, res2.shape, res3.shape, res4.shape,"resnet output shape")
         if self.training:
             x, ah = self.decoder(res1, res2, res3, res4, h, w)
             return x, ah, res1, res2, res3, res4
         else:
             x = self.decoder(res1, res2, res3, res4, h, w)
-            return x, res1, res2, res3, res4
+            return x
+
+class UNetFormer_Distill():
+    def __init__(self):
+        student = UNetFormer(backbone_name='swsl_resnet18')
+        load_S_model(args, student, False)
+        print_model_parm_nums(student, 'student_model')
+        self.student = student
+
+        teacher = UNetFormer(backbone_name='swsl_resnet50')
+        load_T_model(teacher, args.T_ckpt_path)
+        print_model_parm_nums(teacher, 'teacher_model')
+        self.teacher = teacher
+
+        D_model = Discriminator(args.preprocess_GAN_mode, args.classes_num, args.batch_size, args.imsize_for_adv, args.adv_conv_dim)
+        load_D_model(args, D_model, False)
+        print_model_parm_nums(D_model, 'D_model')
+        self.parallel_D = self.DataParallelModelProcess(D_model, 2, 'train', device)
+
+        self.G_solver = optim.SGD([{'params': filter(lambda p: p.requires_grad, self.student.parameters()), 'initial_lr': args.lr_g}], args.lr_g, momentum=args.momentum, weight_decay=args.weight_decay)
+        self.D_solver = optim.SGD([{'params': filter(lambda p: p.requires_grad, D_model.parameters()), 'initial_lr': args.lr_d}], args.lr_d, momentum=args.momentum, weight_decay=args.weight_decay)
+
+        self.best_mean_IU = args.best_mean_IU
+
+        self.criterion = self.DataParallelCriterionProcess(CriterionDSN()) #CriterionCrossEntropy()
+        self.criterion_pixel_wise = self.DataParallelCriterionProcess(CriterionPixelWise())
+        #self.criterion_pair_wise_for_interfeat = [self.DataParallelCriterionProcess(CriterionPairWiseforWholeFeatAfterPool(scale=args.pool_scale[ind], feat_ind=-(ind+1))) for ind in range(len(args.lambda_pa))]
+        self.criterion_pair_wise_for_interfeat = self.DataParallelCriterionProcess(CriterionPairWiseforWholeFeatAfterPool(scale=args.pool_scale, feat_ind=-5))
+        self.criterion_adv = self.DataParallelCriterionProcess(CriterionAdv(args.adv_loss_type))
+        
+        if args.adv_loss_type == 'wgan-gp':
+            self.criterion_AdditionalGP = self.DataParallelCriterionProcess(CriterionAdditionalGP(self.parallel_D, args.lambda_gp))
+        self.criterion_adv_for_G = self.DataParallelCriterionProcess(CriterionAdvForG(args.adv_loss_type))
+            
+        self.mc_G_loss = 0.0
+        self.pi_G_loss = 0.0
+        self.pa_G_loss = 0.0
+        self.D_loss = 0.0
+    
+    def forward(self):
+        args = self.args
+        with torch.no_grad():
+            self.preds_T = self.parallel_teacher.eval()(self.images, parallel=args.parallel)
+        self.preds_S = self.parallel_student.train()(self.images, parallel=args.parallel)
+
+    def student_backward(self):
+        args = self.args
+        G_loss = 0.0
+        temp = self.criterion(self.preds_S, self.labels, is_target_scattered = False)
+        temp_T = self.criterion(self.preds_T, self.labels, is_target_scattered = False)
+        self.mc_G_loss = temp.item()
+        G_loss = G_loss + temp
+        if args.pi == True:
+            temp = args.lambda_pi*self.criterion_pixel_wise(self.preds_S, self.preds_T, is_target_scattered = True)
+            self.pi_G_loss = temp.item()
+            G_loss = G_loss + temp
+        if args.pa == True:
+            #for ind in range(len(args.lambda_pa)):
+            #    if args.lambda_pa[ind] != 0.0:
+            #        temp1 = self.criterion_pair_wise_for_interfeat[ind](self.preds_S, self.preds_T, is_target_scattered = True)
+            #        self.pa_G_loss[ind] = temp1.item()
+            #        G_loss = G_loss + args.lambda_pa[ind]*temp1
+            #    elif args.lambda_pa[ind] == 0.0:
+            #        self.pa_G_loss[ind] = 0.0
+            temp1 = self.criterion_pair_wise_for_interfeat(self.preds_S, self.preds_T, is_target_scattered = True)
+            self.pa_G_loss = temp1.item()
+            G_loss = G_loss + args.lambda_pa*temp1
+        if self.args.ho == True:
+            d_out_S = self.parallel_D(eval(compile(to_tuple_str('self.preds_S', args.gpu_num, '[0]'), '<string>', 'eval')), parallel=args.parallel)
+            G_loss = G_loss + args.lambda_d*self.criterion_adv_for_G(d_out_S, d_out_S, is_target_scattered = True)
+        G_loss.backward()
+        self.G_loss = G_loss.item()
+
+    def discriminator_backward(self):
+        self.D_solver.zero_grad()
+        args = self.args
+        d_out_T = self.parallel_D(eval(compile(to_tuple_str('self.preds_T', args.gpu_num, '[0].detach()'), '<string>', 'eval')), parallel=True)
+        d_out_S = self.parallel_D(eval(compile(to_tuple_str('self.preds_S', args.gpu_num, '[0].detach()'), '<string>', 'eval')), parallel=True)
+        d_loss = args.lambda_d*self.criterion_adv(d_out_S, d_out_T, is_target_scattered = True)
+
+        if args.adv_loss_type == 'wgan-gp':
+            d_loss += args.lambda_d*self.criterion_AdditionalGP(self.preds_S, self.preds_T, is_target_scattered = True)
+
+        d_loss.backward()
+        self.D_loss = d_loss.item()
+        self.D_solver.step()
+
+    def optimize_parameters(self):
+        self.forward()
+        self.G_solver.zero_grad()
+        self.student_backward()
+        self.G_solver.step()
+        if self.args.ho == True:
+            self.discriminator_backward()
+
+    def evalute_model(self, model, loader, gpu_id, input_size, num_classes, whole):
+        mean_IU, IU_array = evaluate_main(model=model, loader = loader,  
+                gpu_id = gpu_id, 
+                input_size = input_size, 
+                num_classes = num_classes,
+                whole = whole)
+        return mean_IU, IU_array 
+
+    def print_info(self, epoch, step):
+        logging.info('step:{:5d} G_lr:{:.6f} G_loss:{:.5f}(mc:{:.5f} pixelwise:{:.5f} pairwise:{:.5f}) D_lr:{:.6f} D_loss:{:.5f}'.format(
+                        step, self.G_solver.param_groups[-1]['lr'], 
+                        self.G_loss, self.mc_G_loss, self.pi_G_loss, self.pa_G_loss, 
+                        self.D_solver.param_groups[-1]['lr'], self.D_loss))
+
+    def __del__(self):
+        pass
+
+    def save_ckpt(self, epoch, step, mean_IU, IU_array):
+        torch.save(self.student.state_dict(),osp.join(self.args.snapshot_dir, 'CS_scenes_'+str(step)+'_'+str(mean_IU)+'.pth'))  
         
 if __name__ == "__main__":
     unet = UNetFormer()
