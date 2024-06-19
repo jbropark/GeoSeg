@@ -1,6 +1,5 @@
 from train_supervision import *
 import torch_pruning as tp
-from geoseg.models.UNetFormer import load_backbone
 
 
 def get_args():
@@ -29,10 +28,9 @@ def main():
     args = get_args()
     importance = make_importance(args.importance)
 
-    backbone = load_backbone(args.path, args.name, True)
-    if not args.path:
-        torch.save(backbone, f"{args.name}-pretrained.ckpt")
+    model = Supervision_Train.load_from_checkpoint(args.path)
 
+    backbone = model.net.backbone
     backbone.eval()
 
     ignored_layers = list()
