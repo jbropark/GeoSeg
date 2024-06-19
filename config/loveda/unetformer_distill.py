@@ -18,7 +18,7 @@ num_classes = len(CLASSES)
 classes = CLASSES
 
 weights_name = "resnet-distill"
-weights_path = "drive/MyDrive/model_weights/loveda/{}".format(weights_name)
+weights_path = "model_weights/loveda/{}".format(weights_name)
 test_weights_name = "last"
 monitor = 'val_mIoU'
 monitor_mode = 'max'

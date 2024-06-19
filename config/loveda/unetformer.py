@@ -17,7 +17,7 @@ backbone_weight_decay = 0.01
 num_classes = len(CLASSES)
 classes = CLASSES
 
-weights_name = "unetformer-r18-512crop-ms-epoch30-rep"
+weights_name = "unetformer-prune"
 weights_path = "model_weights/loveda/{}".format(weights_name)
 test_weights_name = "last"
 log_name = 'loveda/{}'.format(weights_name)
